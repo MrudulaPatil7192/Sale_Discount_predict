@@ -6,11 +6,11 @@ from flask import Flask, render_template_string, request, jsonify
 
 app = Flask(__name__)
 
-# Base directory setup
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, 'model.pkl')
 
 model = None
+scaler = None
 model_status = "Offline"
 status_message = ""
 
@@ -27,29 +27,37 @@ FEATURE_COLUMNS = [
 ]
 
 def train_fallback_model():
-    """Trains an on-the-fly SVR model with pandas features if model.pkl is missing or corrupt."""
+    """Trains a fallback SVR model if model.pkl is missing or unpickleable."""
     from sklearn.svm import SVR
     X_dummy = pd.DataFrame(np.random.rand(100, 9) * 100, columns=FEATURE_COLUMNS)
-    y_dummy = np.random.rand(100) * 50
+    y_dummy = np.random.rand(100) * 500
     svr = SVR(kernel='rbf')
     svr.fit(X_dummy, y_dummy)
-    return svr
+    return svr, None
 
-# Attempt to load trained model pickle file
+# Safely unpickle model and check for dictionary structure
 if os.path.exists(MODEL_PATH):
     try:
         with open(MODEL_PATH, 'rb') as f:
-            model = pickle.load(f)
+            obj = pickle.load(f)
+        
+        # Check if pickled object is a dictionary containing model/scaler
+        if isinstance(obj, dict):
+            model = obj.get('model') or obj.get('svr') or obj.get('regressor') or list(obj.values())[0]
+            scaler = obj.get('scaler') or obj.get('std_scaler')
+        else:
+            model = obj
+            
         model_status = "Online"
-        status_message = "Custom SVR Model loaded successfully."
+        status_message = "Custom ML Model loaded successfully."
     except Exception as e:
-        model = train_fallback_model()
+        model, scaler = train_fallback_model()
         model_status = "Fallback Mode"
-        status_message = f"Incompatibility detected ({str(e)}). Running on Fallback Engine."
+        status_message = f"Pickle load error: {str(e)}. Running on Fallback SVR Engine."
 else:
-    model = train_fallback_model()
+    model, scaler = train_fallback_model()
     model_status = "Fallback Mode"
-    status_message = "model.pkl missing. Running on Fallback Engine (run 'git add -f model.pkl' to fix)."
+    status_message = "model.pkl not found in root directory. Running on Fallback SVR Engine."
 
 HTML_LAYOUT = """
 <!DOCTYPE html>
@@ -57,14 +65,15 @@ HTML_LAYOUT = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Sales Prediction Engine</title>
+    <title>Interactive Sales Predictor</title>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg: #030712;
-            --card-bg: rgba(17, 24, 39, 0.8);
+            --card-bg: rgba(17, 24, 39, 0.85);
             --border: rgba(255, 255, 255, 0.12);
             --accent: #6366f1;
+            --accent-hover: #4f46e5;
             --accent-glow: rgba(99, 102, 241, 0.4);
             --text-main: #f9fafb;
             --text-sub: #9ca3af;
@@ -89,7 +98,7 @@ HTML_LAYOUT = """
             overflow-x: hidden;
         }
 
-        /* Animated Glowing Orbs */
+        /* Ambient Animated Glows */
         .glow-orb {
             position: absolute;
             border-radius: 50%;
@@ -98,18 +107,18 @@ HTML_LAYOUT = """
             animation: pulseGlow 8s ease-in-out infinite alternate;
         }
         .orb-1 {
-            width: 400px;
-            height: 400px;
-            background: rgba(99, 102, 241, 0.25);
-            top: -80px;
-            left: -80px;
+            width: 420px;
+            height: 420px;
+            background: rgba(99, 102, 241, 0.22);
+            top: -100px;
+            left: -100px;
         }
         .orb-2 {
-            width: 350px;
-            height: 350px;
-            background: rgba(168, 85, 247, 0.2);
-            bottom: -80px;
-            right: -80px;
+            width: 380px;
+            height: 380px;
+            background: rgba(168, 85, 247, 0.18);
+            bottom: -100px;
+            right: -100px;
             animation-delay: -4s;
         }
 
@@ -122,20 +131,14 @@ HTML_LAYOUT = """
             position: relative;
             z-index: 1;
             width: 100%;
-            max-width: 880px;
+            max-width: 900px;
             background: var(--card-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
             border: 1px solid var(--border);
             border-radius: 28px;
             padding: 2.5rem;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
-            animation: cardAppear 0.6s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-
-        @keyframes cardAppear {
-            from { opacity: 0; transform: translateY(25px); }
-            to { opacity: 1; transform: translateY(0); }
         }
 
         header {
@@ -196,9 +199,33 @@ HTML_LAYOUT = """
             color: #fde047;
         }
 
+        .toolbar {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            color: var(--text-sub);
+            padding: 0.4rem 0.8rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.12);
+            color: #fff;
+        }
+
         .form-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
             gap: 1.2rem;
         }
 
@@ -257,14 +284,14 @@ HTML_LAYOUT = """
             cursor: not-allowed;
         }
 
-        /* Animated Output Card */
+        /* Result Panel */
         #result-card {
             display: none;
             margin-top: 2rem;
-            padding: 1.5rem;
+            padding: 1.8rem;
             background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%);
-            border: 1px solid rgba(129, 140, 248, 0.3);
-            border-radius: 18px;
+            border: 1px solid rgba(129, 140, 248, 0.35);
+            border-radius: 20px;
             text-align: center;
             animation: fadeIn 0.4s ease-out;
         }
@@ -277,9 +304,10 @@ HTML_LAYOUT = """
             border: 1px solid rgba(239, 68, 68, 0.3);
             border-radius: 14px;
             color: #f87171;
-            font-size: 0.9rem;
-            text-align: center;
+            font-size: 0.88rem;
+            text-align: left;
             animation: fadeIn 0.4s ease-out;
+            white-space: pre-wrap;
         }
 
         @keyframes fadeIn {
@@ -295,7 +323,7 @@ HTML_LAYOUT = """
         }
 
         .prediction-value {
-            font-size: 2.8rem;
+            font-size: 3rem;
             font-weight: 800;
             color: #ffffff;
             margin-top: 0.3rem;
@@ -314,23 +342,28 @@ HTML_LAYOUT = """
             {% else %}
                 <div class="status-badge status-fallback">● {{ model_status }}</div>
             {% endif %}
-            <h1>Sales Prediction Interface</h1>
-            <p>Input variables to calculate real-time ML target estimations</p>
+            <h1>Sales Prediction Dashboard</h1>
+            <p>Interactive ML Interface for Real-Time Target Estimation</p>
         </header>
 
         <div class="info-banner {% if model_status == 'Online' %}info-online{% else %}info-fallback{% endif %}">
             {{ status_message }}
         </div>
 
+        <div class="toolbar">
+            <button type="button" class="btn-secondary" onclick="loadPreset(1)">Load Sample A</button>
+            <button type="button" class="btn-secondary" onclick="loadPreset(2)">Load Sample B</button>
+        </div>
+
         <form id="predict-form" class="form-grid">
             <div class="input-group">
                 <label>Customer ID</label>
-                <input type="number" name="customer_id" value="101" required>
+                <input type="number" id="customer_id" name="customer_id" value="101" required>
             </div>
 
             <div class="input-group">
                 <label>Product Category</label>
-                <select name="product_category">
+                <select id="product_category" name="product_category">
                     <option value="0">Electronics</option>
                     <option value="1">Clothing</option>
                     <option value="2">Home & Kitchen</option>
@@ -340,7 +373,7 @@ HTML_LAYOUT = """
 
             <div class="input-group">
                 <label>Region</label>
-                <select name="region">
+                <select id="region" name="region">
                     <option value="0">North</option>
                     <option value="1">South</option>
                     <option value="2">East</option>
@@ -350,17 +383,17 @@ HTML_LAYOUT = """
 
             <div class="input-group">
                 <label>Quantity</label>
-                <input type="number" step="any" name="quantity" value="5" required>
+                <input type="number" step="any" id="quantity" name="quantity" value="5" required>
             </div>
 
             <div class="input-group">
                 <label>Unit Price ($)</label>
-                <input type="number" step="any" name="unit_price" value="49.99" required>
+                <input type="number" step="any" id="unit_price" name="unit_price" value="49.99" required>
             </div>
 
             <div class="input-group">
                 <label>Payment Method</label>
-                <select name="payment_method">
+                <select id="payment_method" name="payment_method">
                     <option value="0">Credit Card</option>
                     <option value="1">PayPal</option>
                     <option value="2">Bank Transfer</option>
@@ -369,21 +402,21 @@ HTML_LAYOUT = """
 
             <div class="input-group">
                 <label>Delivery Days</label>
-                <input type="number" step="any" name="delivery_days" value="3" required>
+                <input type="number" step="any" id="delivery_days" name="delivery_days" value="3" required>
             </div>
 
             <div class="input-group">
                 <label>Customer Rating</label>
-                <input type="number" step="0.1" name="customer_rating" value="4.5" min="1" max="5" required>
+                <input type="number" step="0.1" id="customer_rating" name="customer_rating" value="4.5" min="1" max="5" required>
             </div>
 
             <div class="input-group">
                 <label>Revenue ($)</label>
-                <input type="number" step="any" name="revenue" value="249.95" required>
+                <input type="number" step="any" id="revenue" name="revenue" value="249.95" required>
             </div>
 
             <button type="submit" class="btn-submit" id="btn-submit">
-                Generate Prediction
+                Calculate Predicted Outcome
             </button>
         </form>
 
@@ -396,6 +429,30 @@ HTML_LAYOUT = """
     </div>
 
     <script>
+        function loadPreset(type) {
+            if (type === 1) {
+                document.getElementById('customer_id').value = 105;
+                document.getElementById('product_category').value = 0;
+                document.getElementById('region').value = 1;
+                document.getElementById('quantity').value = 12;
+                document.getElementById('unit_price').value = 199.99;
+                document.getElementById('payment_method').value = 0;
+                document.getElementById('delivery_days').value = 2;
+                document.getElementById('customer_rating').value = 4.8;
+                document.getElementById('revenue').value = 2399.88;
+            } else {
+                document.getElementById('customer_id').value = 202;
+                document.getElementById('product_category').value = 2;
+                document.getElementById('region').value = 3;
+                document.getElementById('quantity').value = 2;
+                document.getElementById('unit_price').value = 29.50;
+                document.getElementById('payment_method').value = 1;
+                document.getElementById('delivery_days').value = 5;
+                document.getElementById('customer_rating').value = 3.9;
+                document.getElementById('revenue').value = 59.00;
+            }
+        }
+
         document.getElementById('predict-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('btn-submit');
@@ -404,7 +461,7 @@ HTML_LAYOUT = """
             const output = document.getElementById('prediction-output');
 
             btn.disabled = true;
-            btn.innerText = 'Calculating...';
+            btn.innerText = 'Processing Model...';
             resultCard.style.display = 'none';
             errorCard.style.display = 'none';
 
@@ -424,15 +481,15 @@ HTML_LAYOUT = """
                     output.innerText = Number(result.prediction).toFixed(4);
                     resultCard.style.display = 'block';
                 } else {
-                    errorCard.innerText = 'Prediction Error: ' + (result.error || 'Invalid response structure');
+                    errorCard.innerText = 'Backend Prediction Error:\n' + (result.error || 'Unknown response error.');
                     errorCard.style.display = 'block';
                 }
             } catch (err) {
-                errorCard.innerText = 'Network error: Failed to connect to prediction endpoint.';
+                errorCard.innerText = 'Network Error: Unable to reach the backend endpoint.';
                 errorCard.style.display = 'block';
             } finally {
                 btn.disabled = false;
-                btn.innerText = 'Generate Prediction';
+                btn.innerText = 'Calculate Predicted Outcome';
             }
         });
     </script>
@@ -466,16 +523,21 @@ def predict():
             'revenue': [float(data['revenue'])]
         }
 
-        # Create Pandas DataFrame to maintain feature names expected by Scikit-Learn
         df_input = pd.DataFrame(input_data)
 
-        try:
-            prediction = model.predict(df_input)
-        except Exception:
-            # Fallback to NumPy 2D array if model was fit on pure NumPy
-            array_input = df_input.to_numpy()
-            prediction = model.predict(array_input)
+        # Apply scaling if standard scaler was preserved in pickle
+        if scaler is not None:
+            processed_input = scaler.transform(df_input)
+        else:
+            processed_input = df_input
 
+        # Predict with DataFrame or NumPy array depending on estimator requirements
+        try:
+            prediction = model.predict(processed_input)
+        except Exception:
+            prediction = model.predict(df_input.to_numpy())
+
+        # Extract numeric prediction output
         val = float(prediction[0]) if hasattr(prediction, '__getitem__') else float(prediction)
         return jsonify({'prediction': val})
 
