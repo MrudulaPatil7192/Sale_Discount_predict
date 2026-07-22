@@ -11,7 +11,7 @@ st.set_page_config(
     layout="centered"
 )
 
-# Custom Styling to match your Dark Executive UI
+# Custom Dark Theme Styling
 st.markdown("""
     <style>
     /* Dark Theme Background */
@@ -146,7 +146,6 @@ if calculate_btn:
     predicted_outcome = None
     
     if model is not None:
-        # Build pandas DataFrame with standard feature columns
         input_df = pd.DataFrame([{
             'Customer ID': customer_id,
             'Product Category': product_category,
@@ -160,17 +159,14 @@ if calculate_btn:
         }])
         
         try:
-            # Try predicting using DataFrame input
             predicted_outcome = float(model.predict(input_df)[0])
         except Exception:
             try:
-                # Fallback to numeric-only numpy array
                 numeric_features = np.array([[customer_id, quantity, unit_price, delivery_days, customer_rating, revenue]])
                 predicted_outcome = float(model.predict(numeric_features)[0])
             except Exception:
                 predicted_outcome = None
 
-    # Fallback formula if model file is not available or incompatible
     if predicted_outcome is None:
         predicted_outcome = float(revenue * 5.82)
 
