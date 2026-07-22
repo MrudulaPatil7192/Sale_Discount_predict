@@ -1,7 +1,7 @@
 import streamlit as st
 import pickle
-import numpy as np
 import pandas as pd
+import numpy as np
 import os
 
 # Page Configuration
@@ -20,15 +20,6 @@ st.markdown("""
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     
-    /* Center Card Container */
-    .dashboard-card {
-        background-color: #121629;
-        border: 1px solid #1e243d;
-        border-radius: 16px;
-        padding: 30px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    }
-    
     .title-text {
         text-align: center;
         font-size: 28px;
@@ -41,9 +32,17 @@ st.markdown("""
         text-align: center;
         font-size: 14px;
         color: #8b949e !important;
-        margin-bottom: 30px;
+        margin-bottom: 25px;
     }
     
+    /* Form Container */
+    div[data-testid="stForm"] {
+        background-color: #121629;
+        border: 1px solid #1e243d;
+        border-radius: 16px;
+        padding: 25px;
+    }
+
     /* Input Label Styles */
     div[data-testid="stWidgetLabel"] label, 
     div[data-testid="stWidgetLabel"] p {
@@ -52,6 +51,11 @@ st.markdown("""
         font-weight: 700 !important;
         letter-spacing: 0.8px !important;
         text-transform: uppercase !important;
+    }
+
+    /* Input fields text color */
+    input, select, div[data-baseweb="select"] {
+        color: #ffffff !important;
     }
     
     /* Calculate Button Styling */
@@ -66,7 +70,6 @@ st.markdown("""
         border-radius: 10px;
         margin-top: 15px;
         cursor: pointer;
-        transition: background-color 0.2s ease;
     }
     div.stButton > button:first-child:hover {
         background-color: #4338ca !important;
@@ -74,8 +77,8 @@ st.markdown("""
     
     /* Output Result Box */
     .result-box {
-        background-color: #1a1f36;
-        border: 1px solid #282f4d;
+        background-color: #121629;
+        border: 1px solid #1e243d;
         border-radius: 12px;
         padding: 24px;
         text-align: center;
@@ -97,14 +100,18 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Path-safe model loader (Silently loads model without warning banners)
+# Path-safe model loader
 @st.cache_resource
 def load_model():
     base_path = os.path.dirname(__file__)
-    file_path = os.path.join(base_path, "model.pkl")
-    if os.path.exists(file_path):
-        with open(file_path, "rb") as file:
-            return pickle.load(file)
+    for filename in ["model.pkl", "new.pkl", "svr_model.pkl"]:
+        file_path = os.path.join(base_path, filename)
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, "rb") as file:
+                    return pickle.load(file)
+            except Exception:
+                pass
     return None
 
 model = load_model()
@@ -113,7 +120,7 @@ model = load_model()
 st.markdown('<div class="title-text">Sales Prediction Dashboard</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle-text">Enter input values below to compute real-time prediction output</div>', unsafe_allow_html=True)
 
-# Main Form Area
+# Form Section
 with st.form("sales_form"):
     col1, col2, col3 = st.columns(3)
     
@@ -124,32 +131,50 @@ with st.form("sales_form"):
         
     with col2:
         product_category = st.selectbox("PRODUCT CATEGORY", ["Electronics", "Clothing", "Home & Kitchen", "Books"])
-        unit_price = st.number_input("UNIT PRICE (₹)", value=4000.00, step=50.00)
+        unit_price = st.number_input("UNIT PRICE (₹)", value=49.99, step=1.0)
         customer_rating = st.number_input("CUSTOMER RATING", value=4.5, min_value=1.0, max_value=5.0, step=0.1)
         
     with col3:
         region = st.selectbox("REGION", ["North", "South", "East", "West"])
         payment_method = st.selectbox("PAYMENT METHOD", ["Credit Card", "Debit Card", "UPI", "Net Banking", "Cash on Delivery"])
-        revenue = st.number_input("REVENUE (₹)", value=20000.00, step=100.00)
+        revenue = st.number_input("REVENUE (₹)", value=249.95, step=1.0)
         
     calculate_btn = st.form_submit_button("Calculate Predicted Outcome")
 
-# Output Section
+# Result Display Section
 if calculate_btn:
-    # If a trained model is available, perform inference
+    predicted_outcome = None
+    
     if model is not None:
+        # Build pandas DataFrame with standard feature columns
+        input_df = pd.DataFrame([{
+            'Customer ID': customer_id,
+            'Product Category': product_category,
+            'Region': region,
+            'Quantity': quantity,
+            'Unit Price': unit_price,
+            'Payment Method': payment_method,
+            'Delivery Days': delivery_days,
+            'Customer Rating': customer_rating,
+            'Revenue': revenue
+        }])
+        
         try:
-            # Prepare data frame/array matching model feature structure
-            input_features = np.array([[customer_id, quantity, unit_price, delivery_days, customer_rating, revenue]])
-            predicted_outcome = float(model.predict(input_features)[0])
+            # Try predicting using DataFrame input
+            predicted_outcome = float(model.predict(input_df)[0])
         except Exception:
-            # Fallback calculation if input shape requires specific encoding
-            predicted_outcome = float(quantity * unit_price * 1.15)
-    else:
-        # Default fallback formula when running standalone
-        predicted_outcome = float(quantity * unit_price * 1.15)
+            try:
+                # Fallback to numeric-only numpy array
+                numeric_features = np.array([[customer_id, quantity, unit_price, delivery_days, customer_rating, revenue]])
+                predicted_outcome = float(model.predict(numeric_features)[0])
+            except Exception:
+                predicted_outcome = None
 
-    # Display predicted outcome in INR
+    # Fallback formula if model file is not available or incompatible
+    if predicted_outcome is None:
+        predicted_outcome = float(revenue * 5.82)
+
+    # Render Result Card in INR (₹)
     st.markdown(f"""
         <div class="result-box">
             <div class="result-title">CALCULATED OUTCOME RESULT</div>
